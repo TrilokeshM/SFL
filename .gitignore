@@ -1,0 +1,23 @@
+# Environments
+.env
+venv/
+env/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# IDEs
+.vscode/
+.idea/
+
+# Temporary / Scratch
+scratch/
+temp_ui_extract/
+
+# Build / System
+.DS_Store
+Thumbs.db
