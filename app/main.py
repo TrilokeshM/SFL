@@ -116,6 +116,8 @@ async def analyze_submission(
 
         _submissions[submission_id] = {
             "project_title": project_title,
+            "project_description": project_description,
+            "project_outcomes": project_outcomes,
             "suggested_skills": suggested,
             "evaluation_report": evaluation_report,
             "metadata": metadata,
@@ -194,7 +196,12 @@ async def viva_end(request: VivaEndRequest):
 
     # Evaluate the real-time viva answers
     answers_dicts = [ans.model_dump() for ans in request.answers]
-    viva_summary = evaluate_answers(submission.get("project_title", "Unknown"), answers_dicts)
+    viva_summary = evaluate_answers(
+        project_title=submission.get("project_title", "Unknown"),
+        project_description=submission.get("project_description", ""),
+        project_outcomes=submission.get("project_outcomes", ""),
+        answers=answers_dicts
+    )
     
     # Update the submission's evaluation report with the new viva summary
     if "evaluation_report" in submission and submission["evaluation_report"]:

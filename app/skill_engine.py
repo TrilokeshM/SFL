@@ -240,7 +240,7 @@ def _split_outcomes(raw: str) -> List[str]:
             cleaned.append(line)
     return cleaned or [raw.strip()]
 
-def evaluate_answers(project_title: str, answers: List[dict]) -> EvaluationSummary:
+def evaluate_answers(project_title: str, project_description: str, project_outcomes: str, answers: List[dict]) -> EvaluationSummary:
     if not answers:
         return EvaluationSummary(
             overall_alignment="weak",
@@ -251,8 +251,13 @@ def evaluate_answers(project_title: str, answers: List[dict]) -> EvaluationSumma
         
     system_prompt = (
         "You are an expert technical assessor grading a student's live viva session.\n"
-        "The student has uploaded a project and was asked several questions about it.\n"
-        "Evaluate their answers based on correctness, technical depth, and alignment with the project.\n"
+        "The student has uploaded a project and was asked several questions about their code.\n"
+        "Your job is to evaluate their answers based on correctness, technical depth, and alignment with the expected project outcomes.\n"
+        "CRITICAL INSTRUCTIONS:\n"
+        "1. DO NOT invent or hallucinate answers. Only grade what the student actually said in 'Student Answers'.\n"
+        "2. If an answer is correct but brief, give it appropriate credit based on technical correctness.\n"
+        "3. If an answer is incorrect, irrelevant, or hallucinates, score it strictly as 'not_met'.\n"
+        "4. 'alignment_score' must reflect the true ratio of correct answers (0.0 to 1.0).\n\n"
         "Respond strictly with a JSON object matching this schema:\n"
         "{\n"
         '  "overall_alignment": "strong" | "partial" | "weak",\n'
@@ -263,13 +268,16 @@ def evaluate_answers(project_title: str, answers: List[dict]) -> EvaluationSumma
         '      "outcome": "Question or Skill assessed",\n'
         '      "status": "met" | "partial" | "not_met",\n'
         '      "evidence": "Short explanation of their answer",\n'
-        '      "gap": "Optional gap"\n'
+        '      "gap": "Optional gap if incorrect"\n'
         '    }\n'
         '  ]\n'
         "}\n"
     )
     
-    user_prompt = f"Project: {project_title}\n\nStudent Answers:\n"
+    user_prompt = f"Project Title: {project_title}\n"
+    user_prompt += f"Project Description: {project_description}\n"
+    user_prompt += f"Expected Outcomes:\n{project_outcomes}\n\n"
+    user_prompt += "Student Answers:\n"
     for idx, ans in enumerate(answers):
         user_prompt += f"Q{idx+1}: {ans.get('question', '')}\n"
         user_prompt += f"A{idx+1}: {ans.get('answer', 'No answer provided')}\n\n"
