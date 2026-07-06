@@ -85,7 +85,7 @@ async def analyze_submission(
         total_tokens = 0
 
         try:
-            suggested, tokens = suggest_skills(evidence, catalog)
+            suggested, tokens = await suggest_skills(evidence, catalog)
             total_tokens += tokens
             if not suggested:
                 raise HTTPException(
@@ -95,10 +95,10 @@ async def analyze_submission(
                 )
 
             questions_per_skill = 5 if len(suggested) == 1 else 2
-            questions, tokens = generate_questions(evidence, suggested, questions_per_skill)
+            questions, tokens = await generate_questions(evidence, suggested, questions_per_skill)
             total_tokens += tokens
 
-            summary, tokens = evaluate_outcomes(evidence, project_title, project_description, project_outcomes)
+            summary, tokens = await evaluate_outcomes(evidence, project_title, project_description, project_outcomes)
             total_tokens += tokens
         except Exception as e:
             if isinstance(e, HTTPException):
@@ -194,9 +194,9 @@ async def viva_end(request: VivaEndRequest):
     proctoring_report = end_session(session)
     submission = _submissions.get(session.submission_id, {})
 
-    # Evaluate the real-time viva answers
+    # Evaluate the real-time viva answers (async — does not block event loop)
     answers_dicts = [ans.model_dump() for ans in request.answers]
-    viva_summary = evaluate_answers(
+    viva_summary = await evaluate_answers(
         project_title=submission.get("project_title", "Unknown"),
         project_description=submission.get("project_description", ""),
         project_outcomes=submission.get("project_outcomes", ""),

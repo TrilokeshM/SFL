@@ -81,6 +81,8 @@ class VivaStartRequest(BaseModel):
 
 
 class AnsweredQuestion(BaseModel):
+    model_config = {"extra": "ignore"}
+
     question: str
     answer: str = ""
     skill_name: Optional[str] = None

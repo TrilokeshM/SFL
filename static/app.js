@@ -625,7 +625,11 @@ async function submitSession() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         session_id: state.sessionId,
-        answers: state.questions
+        answers: state.questions.map(q => ({
+          question: q.question,
+          answer: q.answer || "",
+          skill_name: q.skill_name || ""
+        }))
       })
     });
     const data = await res.json();

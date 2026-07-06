@@ -13,7 +13,7 @@ import json
 from typing import List, Tuple
 
 from app.zip_analyzer import CodeEvidence
-from app.llm_client import call_json
+from app.llm_client import call_json, call_json_async
 from app.schemas import SuggestedSkill, SkillQuestions, Question, EvaluationSummary, OutcomeEvaluation
 
 
@@ -30,7 +30,7 @@ def _evidence_prompt(evidence: CodeEvidence) -> str:
     )
 
 
-def suggest_skills(evidence: CodeEvidence, catalog: List[dict]) -> Tuple[List[SuggestedSkill], int]:
+async def suggest_skills(evidence: CodeEvidence, catalog: List[dict]) -> Tuple[List[SuggestedSkill], int]:
     catalog_json = json.dumps(catalog, indent=2)
     system = (
         "You are a strict technical reviewer. You suggest skills a student demonstrated in a "
@@ -48,7 +48,7 @@ def suggest_skills(evidence: CodeEvidence, catalog: List[dict]) -> Tuple[List[Su
         '  "rationale" (one sentence citing specific evidence, e.g. a file name or dependency).\n'
         "Only include skills you have real evidence for."
     )
-    parsed, tokens = call_json(system, user)
+    parsed, tokens = await call_json_async(system, user)
     
     # Robustly handle if the LLM returns an object like {"skills": [...]} instead of an array
     if isinstance(parsed, dict):
@@ -92,7 +92,7 @@ def suggest_skills(evidence: CodeEvidence, catalog: List[dict]) -> Tuple[List[Su
     return results, tokens
 
 
-def generate_questions(
+async def generate_questions(
     evidence: CodeEvidence, skills: List[SuggestedSkill], questions_per_skill: int
 ) -> Tuple[List[SkillQuestions], int]:
     skill_names = [s.skill_name for s in skills]
@@ -124,7 +124,7 @@ def generate_questions(
         '      "references": array of file paths / symbol names the question cites '
         '(MUST NOT BE EMPTY for "codebase_specific" questions, empty for pure "conceptual" questions).'
     )
-    parsed, tokens = call_json(system, user, max_tokens=4000, temperature=0.8)
+    parsed, tokens = await call_json_async(system, user, max_tokens=4000, temperature=0.8)
     
     if isinstance(parsed, dict):
         for val in parsed.values():
@@ -157,7 +157,7 @@ def generate_questions(
     return results, tokens
 
 
-def evaluate_outcomes(
+async def evaluate_outcomes(
     evidence: CodeEvidence, project_title: str, project_description: str, outcomes_raw: str
 ) -> Tuple[EvaluationSummary, int]:
     outcomes = _split_outcomes(outcomes_raw)
@@ -201,7 +201,7 @@ def evaluate_outcomes(
         '  "strengths": array of short strings,\n'
         '  "gaps": array of short strings.'
     )
-    parsed, tokens = call_json(system, user, max_tokens=3000)
+    parsed, tokens = await call_json_async(system, user, max_tokens=3000)
 
     outcome_evals = []
     for item in parsed.get("outcome_evaluation", []):
@@ -240,7 +240,7 @@ def _split_outcomes(raw: str) -> List[str]:
             cleaned.append(line)
     return cleaned or [raw.strip()]
 
-def evaluate_answers(project_title: str, project_description: str, project_outcomes: str, answers: List[dict]) -> EvaluationSummary:
+async def evaluate_answers(project_title: str, project_description: str, project_outcomes: str, answers: List[dict]) -> EvaluationSummary:
     if not answers:
         return EvaluationSummary(
             overall_alignment="weak",
@@ -262,7 +262,7 @@ def evaluate_answers(project_title: str, project_description: str, project_outco
         "{\n"
         '  "overall_alignment": "strong" | "partial" | "weak",\n'
         '  "alignment_score": float (0.0 to 1.0),\n'
-        '  "narrative": "A professional 3-5 sentence summary of their verbal performance...",\n'
+        '  "narrative": "A professional 2-3 sentence summary of their verbal performance.",\n'
         '  "outcome_evaluation": [\n'
         '    {\n'
         '      "outcome": "Question or Skill assessed",\n'
@@ -283,7 +283,8 @@ def evaluate_answers(project_title: str, project_description: str, project_outco
         user_prompt += f"A{idx+1}: {ans.get('answer', 'No answer provided')}\n\n"
         
     try:
-        result, tokens_used = call_json(system_prompt, user_prompt, max_tokens=2000)
+        # Use async client so FastAPI's event loop is never blocked
+        result, tokens_used = await call_json_async(system_prompt, user_prompt, max_tokens=1200)
         
         return EvaluationSummary(
             overall_alignment=result.get("overall_alignment", "weak"),
