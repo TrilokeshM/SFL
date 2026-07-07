@@ -661,7 +661,7 @@ if ($("#next-q-btn")) {
 
 if ($("#skip-q-btn")) {
   $("#skip-q-btn").addEventListener("click", () => {
-    if (state.qIndex < state.questions.length - 1) { state.qIndex++; renderQuestion(); }
+    if (state.qIndex < state.questions.length - 1) { saveAnswer(); state.qIndex++; renderQuestion(); }
   });
 }
 
@@ -673,7 +673,8 @@ function renderReport(data) {
   const sub = state.submissionData;
   if ($("#report-title")) $("#report-title").textContent = sub.project_title;
   if ($("#report-alignment-score")) {
-    const scoreVal = Math.round(data.evaluation_report.summary.alignment_score * 100);
+    const rawScore = data.evaluation_report.summary.alignment_score;
+    const scoreVal = rawScore != null ? Math.round(rawScore * 100) : 0;
     
     // Animate the counter
     let curr = 0;

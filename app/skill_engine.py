@@ -162,7 +162,6 @@ async def evaluate_outcomes(
 ) -> Tuple[EvaluationSummary, int]:
     outcomes = _split_outcomes(outcomes_raw)
     system = (
-        "You are a strict technical mentor evaluating whether a student's codebase actually "
         "You are an expert technical assessor analyzing a student project submission.\n"
         "Your task is to evaluate the provided code evidence against the specific expected outcomes.\n"
         "Provide a highly detailed, professional, and comprehensive analysis.\n"
@@ -241,23 +240,28 @@ def _split_outcomes(raw: str) -> List[str]:
     return cleaned or [raw.strip()]
 
 async def evaluate_answers(project_title: str, project_description: str, project_outcomes: str, answers: List[dict]) -> EvaluationSummary:
-    if not answers:
+    # Filter out completely empty answers so they don't skew the score
+    answered = [a for a in answers if a.get("answer", "").strip()]
+    skipped  = [a for a in answers if not a.get("answer", "").strip()]
+
+    if not answered:
         return EvaluationSummary(
             overall_alignment="weak",
             alignment_score=0.0,
             narrative="No answers were provided during the Viva session.",
             outcome_evaluation=[]
         )
-        
+
     system_prompt = (
         "You are an expert technical assessor grading a student's live viva session.\n"
         "The student has uploaded a project and was asked several questions about their code.\n"
-        "Your job is to evaluate their answers based on correctness, technical depth, and alignment with the expected project outcomes.\n"
+        "Evaluate their answers based on correctness, technical depth, and alignment with the expected project outcomes.\n"
         "CRITICAL INSTRUCTIONS:\n"
-        "1. DO NOT invent or hallucinate answers. Only grade what the student actually said in 'Student Answers'.\n"
+        "1. Only evaluate questions that have a student answer. Do NOT invent or assume answers.\n"
         "2. If an answer is correct but brief, give it appropriate credit based on technical correctness.\n"
-        "3. If an answer is incorrect, irrelevant, or hallucinates, score it strictly as 'not_met'.\n"
-        "4. 'alignment_score' must reflect the true ratio of correct answers (0.0 to 1.0).\n\n"
+        "3. If an answer is incorrect or irrelevant, score it as 'not_met'.\n"
+        "4. 'alignment_score' must reflect the true ratio of correct/partial answers among answered questions (0.0 to 1.0).\n"
+        "5. Keep each 'evidence' and 'gap' field SHORT — one sentence maximum.\n\n"
         "Respond strictly with a JSON object matching this schema:\n"
         "{\n"
         '  "overall_alignment": "strong" | "partial" | "weak",\n'
@@ -265,45 +269,81 @@ async def evaluate_answers(project_title: str, project_description: str, project
         '  "narrative": "A professional 2-3 sentence summary of their verbal performance.",\n'
         '  "outcome_evaluation": [\n'
         '    {\n'
-        '      "outcome": "Question or Skill assessed",\n'
+        '      "outcome": "The question asked",\n'
         '      "status": "met" | "partial" | "not_met",\n'
-        '      "evidence": "Short explanation of their answer",\n'
-        '      "gap": "Optional gap if incorrect"\n'
+        '      "evidence": "One sentence explaining their answer",\n'
+        '      "gap": "One sentence gap, or null if met"\n'
         '    }\n'
         '  ]\n'
         "}\n"
     )
-    
+
     user_prompt = f"Project Title: {project_title}\n"
-    user_prompt += f"Project Description: {project_description}\n"
+    user_prompt += f"Project Description: {project_description or '(not provided)'}\n"
     user_prompt += f"Expected Outcomes:\n{project_outcomes}\n\n"
-    user_prompt += "Student Answers:\n"
-    for idx, ans in enumerate(answers):
+    user_prompt += f"Total questions: {len(answers)} | Answered: {len(answered)} | Skipped: {len(skipped)}\n\n"
+    user_prompt += "Student Answers (only answered questions listed below):\n"
+    for idx, ans in enumerate(answered):
         user_prompt += f"Q{idx+1}: {ans.get('question', '')}\n"
-        user_prompt += f"A{idx+1}: {ans.get('answer', 'No answer provided')}\n\n"
-        
+        user_prompt += f"A{idx+1}: {ans.get('answer', '')}\n\n"
+
+    # Token budget: 150 tokens per answered question + 400 base, capped at 2500
+    token_budget = min(400 + len(answered) * 150, 2500)
+
     try:
-        # Use async client so FastAPI's event loop is never blocked
-        result, tokens_used = await call_json_async(system_prompt, user_prompt, max_tokens=1200)
-        
+        result, _tokens = await call_json_async(system_prompt, user_prompt, max_tokens=token_budget)
+
+        # Validate and normalise status values from LLM
+        VALID_STATUSES = {"met", "partial", "not_met"}
+        outcome_evaluation = []
+        for out in result.get("outcome_evaluation", []):
+            status = out.get("status", "not_met")
+            if status not in VALID_STATUSES:
+                status = "not_met"
+            outcome_evaluation.append(OutcomeEvaluation(
+                outcome=str(out.get("outcome", "Unknown")),
+                status=status,
+                evidence=str(out.get("evidence", "No evidence provided.")),
+                gap=out.get("gap") or None,
+            ))
+
+        # Add skipped questions as not_met entries
+        for ans in skipped:
+            outcome_evaluation.append(OutcomeEvaluation(
+                outcome=str(ans.get("question", "Unknown")),
+                status="not_met",
+                evidence="Question was skipped — no answer provided.",
+                gap="Student did not attempt this question.",
+            ))
+
+        # Compute alignment from evaluated answers only (not skipped)
+        raw_score = result.get("alignment_score", 0.0)
+        # Scale score by fraction answered so skipping affects final score
+        answered_ratio = len(answered) / len(answers) if answers else 0
+        final_score = round(float(raw_score) * answered_ratio, 3)
+
+        alignment = result.get("overall_alignment", "weak")
+        if alignment not in ("strong", "partial", "weak"):
+            alignment = "weak"
+        if final_score >= 0.75:
+            alignment = "strong"
+        elif final_score >= 0.45:
+            alignment = "partial"
+        else:
+            alignment = "weak"
+
         return EvaluationSummary(
-            overall_alignment=result.get("overall_alignment", "weak"),
-            alignment_score=result.get("alignment_score", 0.0),
-            narrative=result.get("narrative", "Evaluation completed."),
-            outcome_evaluation=[
-                OutcomeEvaluation(
-                    outcome=out.get("outcome", "Unknown"),
-                    status=out.get("status", "not_met"),
-                    evidence=out.get("evidence", "No evidence"),
-                    gap=out.get("gap")
-                ) for out in result.get("outcome_evaluation", [])
-            ]
+            overall_alignment=alignment,
+            alignment_score=final_score,
+            narrative=str(result.get("narrative", "Evaluation completed.")),
+            outcome_evaluation=outcome_evaluation,
         )
+
     except Exception as e:
         print(f"Viva evaluation failed: {e}")
         return EvaluationSummary(
             overall_alignment="partial",
             alignment_score=0.5,
-            narrative="Viva evaluation failed due to a processing error.",
+            narrative="Viva evaluation could not be completed due to a processing error.",
             outcome_evaluation=[]
         )
